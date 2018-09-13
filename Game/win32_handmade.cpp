@@ -23,7 +23,8 @@ LRESULT CALLBACK MainWindowCallback
 );
 
 internal void Win32ResizeDIBSection(int width, int height);
-internal void Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int x, int y, int width, int height);
+internal void Win32UpdateWindow(HDC deviceContext, RECT *clientRect, int x, int y, int width, int height);
+internal void RenderWeirdGradient(int xOffset, int yOffset);
 
 
 global_variable bool running;
@@ -51,9 +52,9 @@ int CALLBACK WinMain
 	//WindowClass.hIcon = ;
 	WindowClass.lpszClassName = "HandmadeHeroWindowClass";
 
-	if (RegisterClass(&WindowClass))
+	if(RegisterClass(&WindowClass))
 	{
-		HWND WindowHandle = CreateWindowEx
+		HWND window = CreateWindowEx
 		(
 			0,
 			WindowClass.lpszClassName,
@@ -68,19 +69,36 @@ int CALLBACK WinMain
 			instance,
 			0
 		);
-		if (WindowHandle != NULL)
+		if(window != NULL)
 		{
 			running = true;
-			while (running)
+			int offsetX = 0;
+			int offsetY = 0;
+			while(running)
 			{
+
 				MSG Message;
-				BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
-				if (MessageResult > 0)
+				while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
 				{
+					if(Message.message == WM_QUIT)
+					{
+						running = false;
+					}
 					TranslateMessage(&Message);
 					DispatchMessage(&Message);
 				}
-				else break;
+				HDC deviceContext = GetDC(window);
+				RECT clientRect;
+				GetClientRect(window, &clientRect);
+				int width = clientRect.right - clientRect.left;
+				int height = clientRect.bottom - clientRect.top;
+
+				Win32UpdateWindow(deviceContext, &clientRect, 0, 0, width, height);
+				ReleaseDC(window, deviceContext);
+
+				RenderWeirdGradient(offsetX, offsetY);
+				++offsetX;
+				++offsetY;
 			}
 		}
 		else
@@ -106,65 +124,67 @@ LRESULT CALLBACK MainWindowCallback
 )
 {
 	LRESULT result = 0;
-	switch (message)
+	switch(message)
 	{
-	case WM_SIZE:
-	{
-		RECT clientRect;
-		GetClientRect(window, &clientRect);
-		int width = clientRect.right - clientRect.left;
-		int height = clientRect.bottom - clientRect.top;
-		Win32ResizeDIBSection(width, height);
-		OutputDebugStringA("WM_SIZE\n");
-	}
-	break;
+		case WM_SIZE:
+		{
+			RECT clientRect;
+			GetClientRect(window, &clientRect);
+			int width = clientRect.right - clientRect.left;
+			int height = clientRect.bottom - clientRect.top;
+			Win32ResizeDIBSection(width, height);
+			OutputDebugStringA("WM_SIZE\n");
+		}
+		break;
 
-	case WM_DESTROY:
-	{
-		running = false;
-		OutputDebugStringA("WM_DESTROY\n");
-	}
-	break;
+		case WM_DESTROY:
+		{
+			running = false;
+			OutputDebugStringA("WM_DESTROY\n");
+		}
+		break;
 
-	case WM_CLOSE:
-	{
-		running = false;
-		OutputDebugStringA("WM_CLOSE\n");
-	}
-	break;
+		case WM_CLOSE:
+		{
+			running = false;
+			OutputDebugStringA("WM_CLOSE\n");
+		}
+		break;
 
-	case WM_PAINT:
-	{
-		RECT clientRect;
-		GetClientRect(window, &clientRect);
-		PAINTSTRUCT paint;
-		HDC deviceContext = BeginPaint(window, &paint);
-		int x = paint.rcPaint.left;
-		int y = paint.rcPaint.top;
-		int width = paint.rcPaint.right - paint.rcPaint.left;
-		int height = paint.rcPaint.bottom - paint.rcPaint.top;
-		Win32UpdateWindow(deviceContext, &clientRect, x, y, width, height);
-		EndPaint(window, &paint);
-	}
+		case WM_PAINT:
+		{
+			RECT clientRect;
+			GetClientRect(window, &clientRect);
 
-	case WM_ACTIVATEAPP:
-	{
-		OutputDebugStringA("WM_ACTIVATEAPP\n");
-	}
-	break;
+			PAINTSTRUCT paint;
+			HDC deviceContext = BeginPaint(window, &paint);
+			int x = paint.rcPaint.left;
+			int y = paint.rcPaint.top;
+			int width = paint.rcPaint.right - paint.rcPaint.left;
+			int height = paint.rcPaint.bottom - paint.rcPaint.top;
 
-	default:
-	{
-		result = DefWindowProc(window, message, wParam, lParam);
-	}
-	break;
+			Win32UpdateWindow(deviceContext, &clientRect, x, y, width, height);
+			EndPaint(window, &paint);
+		}
+
+		case WM_ACTIVATEAPP:
+		{
+			OutputDebugStringA("WM_ACTIVATEAPP\n");
+		}
+		break;
+
+		default:
+		{
+			result = DefWindowProc(window, message, wParam, lParam);
+		}
+		break;
 	}
 	return(result);
 }
 
 internal void Win32ResizeDIBSection(int width, int height)
 {
-	if (bitmapMemory)
+	if(bitmapMemory)
 	{
 		VirtualFree(bitmapMemory, 0, MEM_RELEASE);
 	}
@@ -181,31 +201,12 @@ internal void Win32ResizeDIBSection(int width, int height)
 	int bytesPerPixel = 4;
 	int bitmapMemorySize = (bitmapWidth*bitmapHeight)*bytesPerPixel;
 	bitmapMemory = VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
-
-	int pitch = width * bytesPerPixel;
-	uint8* row = (uint8 *) bitmapMemory;
-	for (int y = 0; y < bitmapHeight; y++)
-	{
-		uint8 *pixel = (uint8 *)row;
-		for (int x = 0; x < bitmapWidth; x++)
-		{
-			*pixel = (uint8)x;
-			pixel++;
-			*pixel = (uint8)y;
-			pixel++;
-			*pixel = 0;
-			pixel++;
-			*pixel = 0;
-			pixel++;
-		}
-		row += pitch;
-	}
 }
 
-internal void Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int x, int y, int width, int height)
+internal void Win32UpdateWindow(HDC deviceContext, RECT *clientRect, int x, int y, int width, int height)
 {
-	int windowWidth = windowRect->right - windowRect->left;
-	int windowHeight = windowRect->bottom - windowRect->top;
+	int windowWidth = clientRect->right - clientRect->left;
+	int windowHeight = clientRect->bottom - clientRect->top;
 	StretchDIBits
 	(
 		deviceContext,
@@ -230,4 +231,24 @@ internal void Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int x, int 
 		DIB_RGB_COLORS,
 		SRCCOPY
 	);
+}
+
+internal void RenderWeirdGradient(int xOffset, int yOffset)
+{
+	int width = bitmapWidth;
+	int height = bitmapHeight;
+	int bytesPerPixel = 4;
+	int pitch = width * bytesPerPixel;
+	uint8* row = (uint8 *)bitmapMemory;
+	for(int y = 0; y < bitmapHeight; y++)
+	{
+		uint32 *pixel = (uint32 *)row;
+		for(int x = 0; x < bitmapWidth; x++)
+		{
+			uint8 blue = (x + xOffset);
+			uint8 green = (y + yOffset);
+			*pixel++ = ((green << 8) | blue);
+		}
+		row += pitch;
+	}
 }
