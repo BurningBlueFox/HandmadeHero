@@ -1,7 +1,18 @@
 #include <Windows.h>
+#include <stdint.h>
 #define internal static
 #define local_persist static
 #define global_variable static
+
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+
+typedef int8_t int8;
+typedef int16_t int16;
+typedef int32_t int32;
+typedef int64_t int64;
 
 LRESULT CALLBACK MainWindowCallback
 (
@@ -11,15 +22,15 @@ LRESULT CALLBACK MainWindowCallback
 	LPARAM lParam
 );
 
-internal void Win32ResizeDIBSection (int width, int height);
-internal void Win32UpdateWindow (HDC deviceContext, int x, int y, int width, int height);
+internal void Win32ResizeDIBSection(int width, int height);
+internal void Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int x, int y, int width, int height);
 
 
 global_variable bool running;
 global_variable BITMAPINFO bitmapInfo;
 global_variable void *bitmapMemory;
-global_variable HBITMAP bitmapHandle;
-global_variable HDC bitmapDeviceContext;
+global_variable int bitmapWidth;
+global_variable int bitmapHeight;
 
 
 // V Entry Point V
@@ -40,7 +51,7 @@ int CALLBACK WinMain
 	//WindowClass.hIcon = ;
 	WindowClass.lpszClassName = "HandmadeHeroWindowClass";
 
-	if (RegisterClass (&WindowClass))
+	if (RegisterClass(&WindowClass))
 	{
 		HWND WindowHandle = CreateWindowEx
 		(
@@ -60,14 +71,14 @@ int CALLBACK WinMain
 		if (WindowHandle != NULL)
 		{
 			running = true;
-			while(running)
+			while (running)
 			{
 				MSG Message;
-				BOOL MessageResult = GetMessage (&Message, 0, 0, 0);
+				BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
 				if (MessageResult > 0)
 				{
-					TranslateMessage (&Message);
-					DispatchMessage (&Message);
+					TranslateMessage(&Message);
+					DispatchMessage(&Message);
 				}
 				else break;
 			}
@@ -100,85 +111,120 @@ LRESULT CALLBACK MainWindowCallback
 	case WM_SIZE:
 	{
 		RECT clientRect;
-		GetClientRect (window, &clientRect);
+		GetClientRect(window, &clientRect);
 		int width = clientRect.right - clientRect.left;
 		int height = clientRect.bottom - clientRect.top;
-		Win32ResizeDIBSection (width, height);
-		OutputDebugStringA ("WM_SIZE\n");
+		Win32ResizeDIBSection(width, height);
+		OutputDebugStringA("WM_SIZE\n");
 	}
 	break;
 
 	case WM_DESTROY:
 	{
 		running = false;
-		OutputDebugStringA ("WM_DESTROY\n");
+		OutputDebugStringA("WM_DESTROY\n");
 	}
 	break;
 
 	case WM_CLOSE:
 	{
 		running = false;
-		OutputDebugStringA ("WM_CLOSE\n");
+		OutputDebugStringA("WM_CLOSE\n");
 	}
 	break;
 
+	case WM_PAINT:
+	{
+		RECT clientRect;
+		GetClientRect(window, &clientRect);
+		PAINTSTRUCT paint;
+		HDC deviceContext = BeginPaint(window, &paint);
+		int x = paint.rcPaint.left;
+		int y = paint.rcPaint.top;
+		int width = paint.rcPaint.right - paint.rcPaint.left;
+		int height = paint.rcPaint.bottom - paint.rcPaint.top;
+		Win32UpdateWindow(deviceContext, &clientRect, x, y, width, height);
+		EndPaint(window, &paint);
+	}
+
 	case WM_ACTIVATEAPP:
 	{
-		OutputDebugStringA ("WM_ACTIVATEAPP\n");
+		OutputDebugStringA("WM_ACTIVATEAPP\n");
 	}
 	break;
 
 	default:
 	{
-		result = DefWindowProc (window, message, wParam, lParam);
+		result = DefWindowProc(window, message, wParam, lParam);
 	}
 	break;
 	}
 	return(result);
 }
 
-internal void Win32ResizeDIBSection (int width, int height) 
+internal void Win32ResizeDIBSection(int width, int height)
 {
-	if (bitmapHandle) 
+	if (bitmapMemory)
 	{
-		DeleteObject (bitmapHandle);
+		VirtualFree(bitmapMemory, 0, MEM_RELEASE);
 	}
-	if(bitmapDeviceContext != 0)
-	{
-		bitmapDeviceContext = CreateCompatibleDC (0);
-	}
+	bitmapWidth = width;
+	bitmapHeight = height;
 
-	bitmapInfo.bmiHeader.biSize = sizeof (bitmapInfo.bmiHeader);
-	bitmapInfo.bmiHeader.biWidth = width;
-	bitmapInfo.bmiHeader.biHeight = height;
+	bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+	bitmapInfo.bmiHeader.biWidth = bitmapWidth;
+	bitmapInfo.bmiHeader.biHeight = -bitmapHeight;
 	bitmapInfo.bmiHeader.biPlanes = 1;
 	bitmapInfo.bmiHeader.biBitCount = 32;
 	bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
-	bitmapHandle = CreateDIBSection 
-	(
-		bitmapDeviceContext,
-		&bitmapInfo,
-		DIB_RGB_COLORS,
-		&bitmapMemory,
-		0,
-		0
-	);
+	int bytesPerPixel = 4;
+	int bitmapMemorySize = (bitmapWidth*bitmapHeight)*bytesPerPixel;
+	bitmapMemory = VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+
+	int pitch = width * bytesPerPixel;
+	uint8* row = (uint8 *) bitmapMemory;
+	for (int y = 0; y < bitmapHeight; y++)
+	{
+		uint8 *pixel = (uint8 *)row;
+		for (int x = 0; x < bitmapWidth; x++)
+		{
+			*pixel = (uint8)x;
+			pixel++;
+			*pixel = (uint8)y;
+			pixel++;
+			*pixel = 0;
+			pixel++;
+			*pixel = 0;
+			pixel++;
+		}
+		row += pitch;
+	}
 }
 
-internal void Win32UpdateWindow (HDC deviceContext, int x, int y, int width, int height)
+internal void Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int x, int y, int width, int height)
 {
-	StretchDIBits 
+	int windowWidth = windowRect->right - windowRect->left;
+	int windowHeight = windowRect->bottom - windowRect->top;
+	StretchDIBits
 	(
 		deviceContext,
-		x,
+		0,
+		0,
+		bitmapWidth,
+		bitmapHeight,
+		0,
+		0,
+		windowWidth,
+		windowHeight,
+		/*x,
 		y,
 		width,
 		height,
 		x,
 		y,
 		width,
-		height,
+		height,*/
 		bitmapMemory,
 		&bitmapInfo,
 		DIB_RGB_COLORS,
